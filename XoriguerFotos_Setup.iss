@@ -3,7 +3,7 @@
 ; ============================================================
 
 #define MyAppName "Xoriguer Fotos"
-#define MyAppVersion "1.1"
+#define MyAppVersion "1.2"
 #define MyAppPublisher "Xavier Musté"
 #define MyAppExeName "XoriguerFotos.exe"
 #define ProgId "XoriguerFotos.Imatge"
@@ -28,7 +28,7 @@ ArchitecturesAllowed=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
 ChangesAssociations=yes
-VersionInfoVersion=1.1.0.0
+VersionInfoVersion=1.2.0.0
 VersionInfoDescription=Instal·lador de {#MyAppName}
 VersionInfoCopyright=Creat per Xavier Musté
 

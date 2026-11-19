@@ -2,13 +2,15 @@
 
 import os
 
-from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QGuiApplication, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
+from PyQt6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QTimer, QVariantAnimation, pyqtSignal
+from PyQt6.QtGui import (QColor, QCursor, QGuiApplication, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap,
+                         QShortcut)
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMessageBox, QToolButton, QVBoxLayout, QWidget
 
 import config
 import estil as E
 import imatges as IM
+import valoracions as VAL
 from i18n import t
 
 FONS_A = QColor(E.BG_A)
@@ -22,6 +24,7 @@ class Llenc(QWidget):
     doble_clic = pyqtSignal()
     retall_canviat = pyqtSignal(QRectF)
     ratoli_mogut = pyqtSignal(QPointF)
+    vista_canviada = pyqtSignal()     # zoom o desplaçament fet per l'usuari (per sincronitzar el comparador)
 
     ZOOMS = [0.02, 0.05, 0.08, 0.1, 0.15, 0.2, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32]
 
@@ -46,9 +49,28 @@ class Llenc(QWidget):
         self._retall_ini = None
         self._suau = QTimer(self, singleShot=True, timeout=self._fes_suau)
         self.text_buit = ""
+        # lupa
+        self.lupa = False
+        self.lupa_factor = 2.5
+        self._lupa_temp = False
+        self._pos = None
+        # transicions de la presentació
+        self._vell = None
+        self._t = 1.0
+        self._tipus_tr = "fosa"
+        self._anim = QVariantAnimation(self, startValue=0.0, endValue=1.0, duration=650)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._anim.valueChanged.connect(self._pas_transicio)
+        self._anim.finished.connect(self._fi_transicio)
 
     # ------------------------------------------------------------ imatge
-    def posa_imatge(self, img, conserva_vista=False):
+    def posa_imatge(self, img, conserva_vista=False, transicio=None):
+        if transicio and transicio != "cap" and self.isVisible() and not self.img.isNull():
+            self._anim.stop()
+            self._vell = self.grab()
+            self._tipus_tr = transicio
+            self._t = 0.0
+            self._anim.start()
         self.img = img if img is not None else QImage()
         self._pix = None
         self._esc = None
@@ -58,6 +80,37 @@ class Llenc(QWidget):
         self._recalcula()
         if self.ajusta and self.z < 1 and not self.img.isNull():
             self._fes_suau()          # primera vista ja nítida
+        self.update()
+
+    def _pas_transicio(self, v):
+        self._t = float(v)
+        self.update()
+
+    def _fi_transicio(self):
+        self._vell = None
+        self.update()
+
+    def estat_vista(self):
+        if self.img.isNull():
+            return None
+        return self.ajusta, self.z, self.cx / self.img.width(), self.cy / self.img.height()
+
+    def posa_vista(self, estat):
+        """Aplica l'estat d'un altre llenç (mateix zoom i mateix punt relatiu), sense tornar a avisar."""
+        if estat is None or self.img.isNull():
+            return
+        ajusta, z, rx, ry = estat
+        if ajusta:
+            self.ajusta = True
+            self._recalcula()
+        else:
+            self.ajusta = False
+            self.z = z
+            self.cx, self.cy = rx * self.img.width(), ry * self.img.height()
+            self._limita()
+            self.zoom_canviat.emit(self.z)
+        self._esc = None
+        self._suau.start(140)
         self.update()
 
     def _pixmap(self):
@@ -119,6 +172,7 @@ class Llenc(QWidget):
         self._esc = None
         self._suau.start(140)
         self.zoom_canviat.emit(self.z)
+        self.vista_canviada.emit()
         self.update()
 
     def zoom_pas(self, sentit, punt=None):
@@ -133,6 +187,7 @@ class Llenc(QWidget):
         self._esc = None
         self._recalcula()
         self._suau.start(0)
+        self.vista_canviada.emit()
         self.update()
 
     def alterna_100(self):
@@ -160,6 +215,55 @@ class Llenc(QWidget):
     # ----------------------------------------------------------- pintar
     def paintEvent(self, ev):
         p = QPainter(self)
+        if self._vell is not None:
+            t = self._t
+            if self._tipus_tr == "llisca":
+                p.save()
+                p.translate(self.width() * (1 - t), 0)
+                self._pinta(p)
+                p.restore()
+                p.drawPixmap(QPointF(-self.width() * t, 0), self._vell)
+            else:
+                self._pinta(p)
+                p.setOpacity(1 - t)
+                p.drawPixmap(QPointF(0, 0), self._vell)
+                p.setOpacity(1)
+        else:
+            self._pinta(p)
+        if (self.lupa or self._lupa_temp) and self._pos is not None and not self.img.isNull():
+            self._pinta_lupa(p)
+
+    def _pinta_lupa(self, p):
+        r = 130
+        c = self._pos
+        pi = self.a_imatge(c)
+        zl = max(self.z * self.lupa_factor, 0.02)
+        font = QRectF(pi.x() - r / zl, pi.y() - r / zl, 2 * r / zl, 2 * r / zl)
+        desti = QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r)
+        cami = QPainterPath()
+        cami.addEllipse(desti)
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setClipPath(cami)
+        p.fillRect(desti, FONS_B)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, zl < 3)
+        lim = QRectF(0, 0, self.img.width(), self.img.height())
+        visible = font.intersected(lim)
+        if not visible.isEmpty():
+            k = desti.width() / font.width()
+            d2 = QRectF(desti.x() + (visible.x() - font.x()) * k, desti.y() + (visible.y() - font.y()) * k,
+                        visible.width() * k, visible.height() * k)
+            p.drawPixmap(d2, self._pixmap(), visible)
+        p.setClipping(False)
+        p.setPen(QPen(QColor(E.OR1), 3))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(desti)
+        txt = f"×{self.lupa_factor:g}"
+        p.setPen(QColor(E.CREAM))
+        p.drawText(QRectF(desti.x(), desti.bottom() - 26, desti.width(), 20), Qt.AlignmentFlag.AlignCenter, txt)
+        p.restore()
+
+    def _pinta(self, p):
         p.fillRect(self.rect(), FONS_B)
         if self.img.isNull():
             if self.text_buit:
@@ -229,12 +333,23 @@ class Llenc(QWidget):
         d = ev.angleDelta().y()
         if not d:
             return
+        if (self.lupa or self._lupa_temp) and ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            passos = [1.5, 2, 2.5, 3, 4, 6, 8]
+            i = min(range(len(passos)), key=lambda k: abs(passos[k] - self.lupa_factor))
+            self.lupa_factor = passos[max(0, min(len(passos) - 1, i + (1 if d > 0 else -1)))]
+            self.update()
+            return
         if self.roda_navega and not (ev.modifiers() & Qt.KeyboardModifier.ControlModifier):
             self.roda.emit(1 if d < 0 else -1)
         else:
             self.zoom_pas(1 if d > 0 else -1, ev.position())
 
     def mousePressEvent(self, ev):
+        if ev.button() == Qt.MouseButton.MiddleButton and not self.img.isNull():
+            self._lupa_temp = True
+            self._pos = ev.position()
+            self.update()
+            return
         if ev.button() == Qt.MouseButton.LeftButton and not self.img.isNull():
             if self.mode_retall:
                 self._retall_ini = self._dins(self.a_imatge(ev.position()))
@@ -248,6 +363,9 @@ class Llenc(QWidget):
 
     def mouseMoveEvent(self, ev):
         self.ratoli_mogut.emit(ev.position())
+        if self.lupa or self._lupa_temp:
+            self._pos = ev.position()
+            self.update()
         if self._retall_ini is not None:
             fi = self._dins(self.a_imatge(ev.position()))
             a = self._retall_ini
@@ -270,9 +388,20 @@ class Llenc(QWidget):
             self.cx = cx - d.x() / self.z
             self.cy = cy - d.y() / self.z
             self._limita()
+            self.vista_canviada.emit()
             self.update()
 
+    def leaveEvent(self, ev):
+        if self.lupa:
+            self._pos = None
+            self.update()
+        super().leaveEvent(ev)
+
     def mouseReleaseEvent(self, ev):
+        if ev.button() == Qt.MouseButton.MiddleButton:
+            self._lupa_temp = False
+            self.update()
+            return
         if self._retall_ini is not None:
             self._retall_ini = None
             if self.retall.width() < 3 or self.retall.height() < 3:
@@ -318,6 +447,7 @@ class Visor(QWidget):
     desat = pyqtSignal(str)
     canvi_fitxers = pyqtSignal()      # s'ha canviat el nom o copiat: cal refrescar la llista
     surt = pyqtSignal()
+    valoracio = pyqtSignal(str)       # estrelles o etiquetes canviades
 
     def __init__(self, camins, index, memoria, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
@@ -329,8 +459,13 @@ class Visor(QWidget):
         self.memoria = memoria
         # edició dins del visor
         self.edicio = None            # PIL.Image de treball (només quan s'ha tocat alguna cosa)
-        self.desfer, self.refer = [], []
+        self.desfer, self.refer = [], []   # (imatge, operacions geomètriques) per poder desfer
         self.modificat = False
+        self.geo = []                 # gir/mirall pendents (per desar el JPEG sense pèrdua) o None
+        self._accio_sel = "retall"    # què fa la selecció: retall o ulls vermells
+        self._movie = None
+        from presentacio import Musica
+        self.musica = Musica()
 
         self.llenc = Llenc(self)
         self.llenc.amplia_petites = config.get("amplia_petites")
@@ -413,8 +548,11 @@ class Visor(QWidget):
             "Shift+R": self.recarrega, "E": self._edita, "S": self.alterna_presentacio, "I": self.alterna_info,
             "C": lambda: self.copia_mou(False), "M": lambda: self.copia_mou(True), "F2": self.reanomena,
             "W": self.explorador, "Del": self.elimina, "F11": self.alterna_pantalla, "Ctrl+C": self.copia,
-            "Alt+X": self._surt,
+            "Alt+X": self._surt, "Ctrl+L": self.nivells, "Ctrl+M": self.corbes, "Ctrl+Shift+T": self.text,
+            "U": self.ulls_vermells, "G": self.alterna_lupa, "T": self.etiquetes, "F6": self.correu,
         }
+        for k in range(6):
+            dreceres[f"Ctrl+{k}"] = lambda k=k: self.estrelles(k)
         for tecla, f in dreceres.items():
             QShortcut(QKeySequence(tecla), self, activated=f)
 
@@ -425,16 +563,18 @@ class Visor(QWidget):
     def actual(self):
         return self.camins[self.index] if self.camins else None
 
-    def mostra(self):
+    def mostra(self, transicio=None):
         cami = self.actual()
         if cami is None:
             self.close()
             return
+        self._atura_animacio()
         img = self.memoria.carrega(cami)
         self.llenc.text_buit = t("v_no_es_pot_obrir")
         if self.llenc.mode_retall:
             self.llenc.posa_mode_retall(False)
-        self.llenc.posa_imatge(img)
+        self.llenc.posa_imatge(img, transicio=transicio)
+        self._potser_anima(cami)
         self.lbl_titol.setText(os.path.basename(cami))
         self.setWindowTitle(f"{os.path.basename(cami)} — Xoriguer Fotos")
         self._despres_canvi()
@@ -443,13 +583,32 @@ class Visor(QWidget):
         veines = [self.camins[(self.index + d) % n] for d in (1, -1, 2, 3, -2) if n > 1]
         self.memoria.precarrega(list(dict.fromkeys(veines)))
 
+    def _potser_anima(self, cami):
+        """GIF i WebP animats: es reprodueixen al visor."""
+        if IM.extensio(cami) not in ("gif", "webp", "png", "apng"):
+            return
+        from PyQt6.QtGui import QMovie
+        m = QMovie(cami)
+        if not m.isValid() or m.frameCount() == 1 or not m.supportedFormats():
+            return
+        if m.frameCount() == 0 and IM.extensio(cami) != "gif":
+            return
+        self._movie = m
+        m.frameChanged.connect(lambda _: self._movie is m and self.llenc.posa_imatge(m.currentImage(), conserva_vista=True))
+        m.start()
+
+    def _atura_animacio(self):
+        if self._movie is not None:
+            self._movie.stop()
+            self._movie = None
+
     def _despres_canvi(self):
         self._actualitza_peu()
         self.ped.actualitza(self.modificat, bool(self.desfer), bool(self.refer))
         if self.pinf.isVisible():
             self._omple_info()
 
-    def mou(self, d, en_bucle=False):
+    def mou(self, d, en_bucle=False, transicio=None):
         if not self.camins:
             return
         n = len(self.camins)
@@ -459,7 +618,7 @@ class Visor(QWidget):
         nou = max(0, min(nou, n - 1))
         if nou != self.index and self._pot_sortir():
             self.index = nou
-            self.mostra()
+            self.mostra(transicio)
 
     def ves(self, i):
         if self.camins and self._pot_sortir():
@@ -467,11 +626,20 @@ class Visor(QWidget):
             self.mostra()
 
     def _pas_presentacio(self):
-        if self.modificat:
-            self.temporitzador.stop()
-            self._actualitza_peu()
+        import random
+        from presentacio import tria_transicio
+        n = len(self.camins)
+        if self.modificat or n < 2:
+            self.alterna_presentacio()
+            return
+        if config.get("presentacio_aleatoria"):
+            d = random.choice([k for k in range(n) if k != self.index]) - self.index
         else:
-            self.mou(1, en_bucle=True)
+            d = 1
+            if self.index == n - 1 and config.get("presentacio_bucle") is False:
+                self.alterna_presentacio()
+                return
+        self.mou(d, en_bucle=True, transicio=tria_transicio())
 
     def _actualitza_peu(self, extra=""):
         cami = self.actual()
@@ -486,10 +654,15 @@ class Visor(QWidget):
             pes = ""
         if self.temporitzador.isActive():
             extra += "   ▶ " + t("v_presentacio")
+        estr = VAL.estrelles(cami)
+        if estr:
+            extra += "   " + VAL.text_estrelles(estr)
+        if self.llenc.lupa:
+            extra += "   🔍 " + t("v_lupa_ajuda")
         if self.modificat:
             extra += f"   ● {t('v_modificada')}"
         if self.llenc.mode_retall:
-            extra += "   ✂ " + t("v_retall_ajuda")
+            extra += "   ✂ " + t("v_ulls_ajuda" if self._accio_sel == "ulls" else "v_retall_ajuda")
         self.peu.setText(f"{self.index + 1} / {len(self.camins)}    {os.path.basename(cami)}    "
                          f"{mida}    {pes}    {round(self.llenc.z * 100)}%{extra}")
         self.peu.adjustSize()
@@ -539,13 +712,15 @@ class Visor(QWidget):
             self.llenc.setCursor(Qt.CursorShape.BlankCursor)
 
     # ------------------------------------------------------ edició ràpida
-    def op(self, funcio):
-        """Aplica una operació (PIL -> PIL) a la foto que es veu; es pot desfer i cal desar-la."""
+    def op(self, funcio, geo=None, manté_seleccio=False):
+        """Aplica una operació (PIL -> PIL) a la foto que es veu; es pot desfer i cal desar-la.
+        geo: 'cw', 'ccw', 'h' o 'v' si només gira o fa mirall (llavors el JPEG es pot desar sense pèrdua)."""
         cami = self.actual()
         if not cami or self.llenc.img.isNull():
             return
         if self.temporitzador.isActive():
             self.alterna_presentacio()
+        self._atura_animacio()
         from PyQt6.QtWidgets import QApplication
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -558,12 +733,16 @@ class Visor(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
         mateixa_mida = nova.size == self.edicio.size
-        self.desfer.append(self.edicio)
+        self.desfer.append((self.edicio, self.geo))
         del self.desfer[:-12]
         self.refer.clear()
         self.edicio = nova
+        self.geo = (self.geo + [geo]) if (geo and self.geo is not None) else None
         self.modificat = True
         self._mostra_edicio(mateixa_mida)
+        if manté_seleccio:
+            self.llenc.posa_mode_retall(True)
+            self._actualitza_peu()
 
     def _mostra_edicio(self, conserva=False):
         if self.llenc.mode_retall:
@@ -576,17 +755,87 @@ class Visor(QWidget):
         self.desfer.clear()
         self.refer.clear()
         self.modificat = False
+        self.geo = []
 
     def gira(self, graus):
-        self.op(lambda im: im.rotate(-graus, expand=True))
+        self.op(lambda im: im.rotate(-graus, expand=True), geo="cw" if graus > 0 else "ccw")
 
     def mirall_h(self):
         from PIL import ImageOps
-        self.op(ImageOps.mirror)
+        self.op(ImageOps.mirror, geo="h")
 
     def mirall_v(self):
         from PIL import ImageOps
-        self.op(ImageOps.flip)
+        self.op(ImageOps.flip, geo="v")
+
+    def _base_pil(self):
+        return self.edicio if self.edicio is not None else IM.obre_pil(self.actual())
+
+    def _dialeg(self, classe):
+        if not self.actual() or self.llenc.img.isNull():
+            return
+        import eines_foto as EF
+        if self.temporitzador.isActive():
+            self.alterna_presentacio()
+        self._atura_animacio()
+        f = EF.amb_previsualitzacio(self, self.llenc, self._base_pil(), classe)
+        if f:
+            self.op(f)
+
+    def nivells(self):
+        import eines_foto as EF
+        self._dialeg(EF.DialegNivells)
+
+    def corbes(self):
+        import eines_foto as EF
+        self._dialeg(EF.DialegCorbes)
+
+    def text(self):
+        import eines_foto as EF
+        self._dialeg(EF.DialegText)
+
+    def ulls_vermells(self):
+        if self.llenc.img.isNull():
+            return
+        actiu = not (self.llenc.mode_retall and self._accio_sel == "ulls")
+        self._accio_sel = "ulls"
+        self.llenc.proporcio = None
+        self.llenc.posa_mode_retall(actiu)
+        self._actualitza_peu()
+
+    def alterna_lupa(self):
+        self.llenc.lupa = not self.llenc.lupa
+        self.llenc._pos = self.llenc.mapFromGlobal(QCursor.pos()).toPointF() if self.llenc.lupa else None
+        self.llenc.update()
+        self._actualitza_peu()
+
+    def estrelles(self, n):
+        cami = self.actual()
+        if cami:
+            VAL.posa_estrelles([cami], n)
+            self.valoracio.emit(cami)
+            self._despres_canvi()
+
+    def etiquetes(self):
+        cami = self.actual()
+        if cami:
+            from panells import dialeg_etiquetes
+            if dialeg_etiquetes(self, [cami]):
+                self.valoracio.emit(cami)
+                self._despres_canvi()
+
+    def correu(self):
+        cami = self.actual()
+        if cami and self._pot_sortir():
+            from correu import DialegCorreu
+            DialegCorreu([cami], self).exec()
+
+    def opcions_presentacio(self):
+        from presentacio import DialegPresentacio
+        if DialegPresentacio(self).exec() and self.temporitzador.isActive():
+            self.temporitzador.start(int(config.get("segons_presentacio") * 1000))
+            self.musica.atura()
+            self.musica.comenca()
 
     def efecte(self, nom):
         import editor
@@ -607,13 +856,19 @@ class Visor(QWidget):
     def retalla(self):
         if self.llenc.img.isNull():
             return
-        self.llenc.posa_mode_retall(not self.llenc.mode_retall)
+        actiu = not (self.llenc.mode_retall and self._accio_sel == "retall")
+        self._accio_sel = "retall"
+        self.llenc.posa_mode_retall(actiu)
         self._actualitza_peu()
 
     def _aplica_retall(self):
         r = self.llenc.retall
         caixa = (int(round(r.left())), int(round(r.top())), int(round(r.right())), int(round(r.bottom())))
-        self.op(lambda im: im.crop(caixa))
+        if self._accio_sel == "ulls":
+            import eines_foto as EF
+            self.op(lambda im: EF.ulls_vermells(im, caixa), manté_seleccio=True)
+        else:
+            self.op(lambda im: im.crop(caixa))
 
     def ajusta_llum(self):
         cami = self.actual()
@@ -640,8 +895,8 @@ class Visor(QWidget):
 
     def desfes(self):
         if self.desfer:
-            self.refer.append(self.edicio)
-            self.edicio = self.desfer.pop()
+            self.refer.append((self.edicio, self.geo))
+            self.edicio, self.geo = self.desfer.pop()
             self.modificat = bool(self.desfer)
             if not self.modificat:
                 self.edicio = None
@@ -654,8 +909,8 @@ class Visor(QWidget):
         if self.refer:
             if self.edicio is None:
                 self.edicio = IM.obre_pil(self.actual())
-            self.desfer.append(self.edicio)
-            self.edicio = self.refer.pop()
+            self.desfer.append((self.edicio, self.geo))
+            self.edicio, self.geo = self.refer.pop()
             self.modificat = True
             self._mostra_edicio()
 
@@ -663,9 +918,17 @@ class Visor(QWidget):
         cami = self.actual()
         if not cami or not self.modificat:
             return True
+        if IM.extensio(cami) in IM.NOMES_LECTURA or IM.extensio(cami) not in __import__("editor").FORMATS_DESA:
+            QMessageBox.information(self, "Xoriguer Fotos", t("e_nomes_lectura"))
+            self.desa_com()
+            return not self.modificat
         import editor
+        import orientacio
         try:
-            editor.desa(self.edicio, cami, config.get("qualitat_jpeg"), original=cami)
+            if self.geo and orientacio.es_jpeg(cami) and config.get("gir_sense_perdua") is not False:
+                orientacio.aplica(cami, self.geo)     # sense recomprimir
+            else:
+                editor.desa(self.edicio, cami, config.get("qualitat_jpeg"), original=cami)
         except Exception as e:
             QMessageBox.warning(self, "Xoriguer Fotos", t("e_no_desat") + f"\n{e}")
             return False
@@ -703,6 +966,9 @@ class Visor(QWidget):
             QMessageBox.warning(self, "Xoriguer Fotos", t("e_no_desat") + f"\n{e}")
             return
         self.desat.emit(os.path.normpath(nou))
+        VAL.copia(cami, nou)
+        if IM.extensio(cami) in IM.NOMES_LECTURA:
+            self._reinicia_edicio()
         self._actualitza_peu("    ✔ " + t("v_desat") + ": " + os.path.basename(nou))
 
     def _pot_sortir(self):
@@ -788,8 +1054,10 @@ class Visor(QWidget):
         try:
             if moure:
                 shutil.move(cami, desti)
+                VAL.mou(cami, desti)
             else:
                 shutil.copy2(cami, desti)
+                VAL.copia(cami, desti)
         except OSError as e:
             QMessageBox.warning(self, "Xoriguer Fotos", str(e))
             return
@@ -831,6 +1099,7 @@ class Visor(QWidget):
             QMessageBox.warning(self, "Xoriguer Fotos", str(e))
             return
         self.memoria.oblida(cami)
+        VAL.mou(cami, desti)
         self.camins[self.index] = desti
         self.canvi_fitxers.emit()
         self.mostra()
@@ -870,8 +1139,10 @@ class Visor(QWidget):
     def alterna_presentacio(self):
         if self.temporitzador.isActive():
             self.temporitzador.stop()
+            self.musica.atura()
         else:
             self.temporitzador.start(int(config.get("segons_presentacio") * 1000))
+            self.musica.comenca()
             if not self.isFullScreen():
                 self.showFullScreen()
         self._actualitza_peu()
@@ -936,6 +1207,7 @@ class Visor(QWidget):
         hi_ha = not self.llenc.img.isNull()
         afegeix(m, t("vm_miniatures"), "Enter", self.close, "foto")
         afegeix(m, t("v_presentacio"), "S", self.alterna_presentacio, "presentacio")
+        afegeix(m, t("pr_titol") + "…", "", self.opcions_presentacio)
         m.addSeparator()
         afegeix(m, t("pe_obre") + "…", "Ctrl+O", self.obre, "carpeta")
         afegeix(m, t("ed_desa"), "Ctrl+S", self.desa, "desa", self.modificat)
@@ -953,12 +1225,16 @@ class Visor(QWidget):
         afegeix(sm, t("ed_volteja_v"), "V", self.mirall_v, "volteja", hi_ha)
         afegeix(sm, t("ed_mida") + "…", "Ctrl+R", self.canvia_mida, "mida", hi_ha)
         afegeix(sm, t("ed_retalla"), "X", self.retalla, "retalla", hi_ha)
+        afegeix(sm, t("ef_ulls"), "U", self.ulls_vermells, None, hi_ha)
+        afegeix(sm, t("ef_text") + "…", "Ctrl+Shift+T", self.text, None, hi_ha)
         sm.addSeparator()
         afegeix(sm, t("ed_desfes"), "Ctrl+Z", self.desfes, "desfes", bool(self.desfer))
         afegeix(sm, t("ed_refes"), "Ctrl+Y", self.refes, "refes", bool(self.refer))
         sm = m.addMenu(E.icona("ajustos", mida=16), t("pe_colors"))
         afegeix(sm, t("ef_auto"), "Ctrl+Shift+B", lambda: self.efecte("auto"), None, hi_ha)
         afegeix(sm, t("pe_llum") + "…", "Ctrl+T", self.ajusta_llum, "ajustos", hi_ha)
+        afegeix(sm, t("ef_nivells") + "…", "Ctrl+L", self.nivells, None, hi_ha)
+        afegeix(sm, t("ef_corbes") + "…", "Ctrl+M", self.corbes, None, hi_ha)
         for k in ("equalitza", "bn", "sepia", "negatiu"):
             afegeix(sm, t("ef_" + k), "", lambda k=k: self.efecte(k), None, hi_ha)
         sm = m.addMenu(E.icona(" ", mida=16), t("ed_efectes"))
@@ -976,10 +1252,21 @@ class Visor(QWidget):
         afegeix(sm, t("v_mes_zoom"), "+", lambda: self.llenc.zoom_pas(1), "meszoom")
         afegeix(sm, t("v_menys_zoom"), "−", lambda: self.llenc.zoom_pas(-1), "menyszoom")
         afegeix(sm, t("v_pantalla"), "F11", self.alterna_pantalla, "pantalla")
+        a = afegeix(sm, t("v_lupa"), "G", self.alterna_lupa, "meszoom")
+        a.setCheckable(True)
+        a.setChecked(self.llenc.lupa)
+        sm = m.addMenu(E.icona(" ", mida=16), t("vl_valoracio"))
+        actual = VAL.estrelles(self.actual()) if self.actual() else 0
+        for k in range(6):
+            a = afegeix(sm, VAL.text_estrelles(k) or t("vl_sense"), f"Ctrl+{k}", lambda k=k: self.estrelles(k))
+            a.setCheckable(True)
+            a.setChecked(k == actual)
+        afegeix(m, t("vl_etiquetes") + "…", "T", self.etiquetes)
         m.addSeparator()
         afegeix(m, t("a_copia_a") + "…", "C", lambda: self.copia_mou(False), "copia")
         afegeix(m, t("a_mou_a") + "…", "M", lambda: self.copia_mou(True), "mou")
         afegeix(m, t("pe_imprimeix") + "…", "Ctrl+P", self.imprimeix, None, hi_ha)
+        afegeix(m, t("cr_titol") + "…", "F6", self.correu, None, hi_ha)
         m.addSeparator()
         afegeix(m, t("v_copia"), "Ctrl+C", self.copia, None, hi_ha)
         afegeix(m, t("v_elimina"), "Supr", self.elimina, "elimina")
@@ -995,5 +1282,7 @@ class Visor(QWidget):
             ev.ignore()
             return
         self.temporitzador.stop()
+        self.musica.atura()
+        self._atura_animacio()
         self.tancat.emit(self.actual() or "")
         super().closeEvent(ev)

@@ -1,2 +1,4 @@
 PyQt6>=6.6
 Pillow>=10.0
+pillow-heif>=0.18
+rawpy>=0.21

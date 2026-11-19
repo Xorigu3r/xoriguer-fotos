@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (QDialog, QDialogButtonBox, QFrame, QGridLayout, QHB
 
 import estil as E
 import imatges as IM
+import valoracions as VAL
 from i18n import t
 
 ESTIL_PANELL = f"""
@@ -77,7 +78,8 @@ class PanellEdicio(_Panell):
         self.seccio(t("pe_fitxer"))
         self._files([(t("pe_obre"), "Ctrl+O", v.obre), (t("ed_desa"), "Ctrl+S", v.desa, "desa"),
                      (t("ed_desa_com") + "…", "Ctrl+Shift+S", v.desa_com), (t("v_copia"), "Ctrl+C", v.copia),
-                     (t("pe_imprimeix") + "…", "Ctrl+P", v.imprimeix), (t("v_presentacio"), "S", v.alterna_presentacio),
+                     (t("pe_imprimeix") + "…", "Ctrl+P", v.imprimeix), (t("cr_titol") + "…", "F6", v.correu),
+                     (t("v_presentacio"), "S", v.alterna_presentacio),
                      (t("pe_editor"), "E", v._edita)])
         self.seccio(t("pe_gira_mida"))
         self._fila(t("pe_gira") + ":", [(t("pe_esquerra"), lambda: v.gira(-90)), (t("pe_dreta"), lambda: v.gira(90))], "L, R")
@@ -86,12 +88,14 @@ class PanellEdicio(_Panell):
         self.seccio(t("pe_colors"))
         self._files([(t("ef_auto"), "Ctrl+Shift+B", lambda: v.efecte("auto")),
                      (t("pe_llum") + "…", "Ctrl+T", v.ajusta_llum),
+                     (t("ef_nivells") + "…", "Ctrl+L", v.nivells), (t("ef_corbes") + "…", "Ctrl+M", v.corbes),
                      (t("ef_equalitza"), "", lambda: v.efecte("equalitza"))])
         self._fila("", [(t("ef_bn"), lambda: v.efecte("bn")), (t("ef_sepia"), lambda: v.efecte("sepia")),
                         (t("ef_negatiu"), lambda: v.efecte("negatiu"))], "")
         self.seccio(t("ed_efectes"))
         self._fila("", [(t("ef_enfoca"), lambda: v.efecte("enfoca")), (t("ef_difumina"), lambda: v.efecte("difumina")),
                         (t("ef_vinyeta"), lambda: v.efecte("vinyeta"))], "")
+        self._files([(t("ef_ulls"), "U", v.ulls_vermells), (t("ef_text") + "…", "Ctrl+Shift+T", v.text)])
         self.lay.addSpacing(6)
         self._files([(t("ed_desfes"), "Ctrl+Z", v.desfes, "desfes"), (t("ed_refes"), "Ctrl+Y", v.refes, "refes")])
         self.lay.addStretch()
@@ -219,6 +223,12 @@ class PanellInfo(_Panell):
                 files.append(("DPI", f"{round(float(dpi[0]))} × {round(float(dpi[1]))}"))
             except (TypeError, ValueError, IndexError):
                 pass
+        estr = VAL.estrelles(cami)
+        files.append((t("vl_valoracio"), f"<span style='color:{E.OR1}'>{VAL.text_estrelles(estr)}</span>" if estr
+                      else f"<span style='color:{E.LINE}'>—</span>"))
+        et = VAL.etiquetes(cami)
+        if et:
+            files.append((t("vl_etiquetes"), ", ".join(et)))
         self.lbl_fitxer.setText(self._taula(files))
 
         prog = ex.get("programa")
@@ -281,3 +291,39 @@ class DialegAjustos(QDialog):
 
     def valors(self):
         return {k: s.value() for k, s in self.sliders.items()}
+
+
+def dialeg_etiquetes(parent, camins):
+    """Demana les etiquetes (separades per comes) de les fotos. Retorna True si s'han canviat."""
+    from PyQt6.QtWidgets import QCompleter, QLineEdit
+    from PyQt6.QtCore import QStringListModel
+    d = QDialog(parent)
+    d.setWindowTitle(t("vl_etiquetes"))
+    lay = QVBoxLayout(d)
+    lay.addWidget(QLabel(t("vl_etiquetes_ajuda", n=len(camins)), wordWrap=True))
+    comunes = set(VAL.etiquetes(camins[0]))
+    for c in camins[1:]:
+        comunes &= set(VAL.etiquetes(c))
+    e = QLineEdit(", ".join(sorted(comunes)))
+    totes = VAL.totes_etiquetes()
+    if totes:
+        comp = QCompleter(QStringListModel(totes, d), d)
+        comp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        comp.setFilterMode(Qt.MatchFlag.MatchContains)
+        e.setCompleter(comp)
+    lay.addWidget(e)
+    if totes:
+        lay.addWidget(QLabel(t("vl_existents") + ": " + ", ".join(totes[:40]), objectName="suau", wordWrap=True))
+    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+    bb.button(QDialogButtonBox.StandardButton.Cancel).setText(t("cancel·la"))
+    bb.accepted.connect(d.accept)
+    bb.rejected.connect(d.reject)
+    lay.addWidget(bb)
+    d.resize(440, 180)
+    if not d.exec():
+        return False
+    noves = [x.strip() for x in e.text().split(",") if x.strip()]
+    with_altres = {c: set(VAL.etiquetes(c)) - comunes for c in camins}
+    for c in camins:
+        VAL.posa_etiquetes([c], sorted(with_altres[c] | set(noves)))
+    return True

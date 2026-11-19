@@ -139,6 +139,11 @@ def desa(im, cami, qualitat=92, original=None):
 
 
 def desa_girada(cami, graus, qualitat=92):
+    """JPEG: sense pèrdua (només canvia l'orientació EXIF). Altres formats: es tornen a desar."""
+    import orientacio
+    if orientacio.es_jpeg(cami) and config.get("gir_sense_perdua") is not False:
+        orientacio.aplica(cami, [{90: "cw", -90: "ccw", 180: "180", -180: "180"}[graus]])
+        return
     im = IM.obre_pil(cami)
     im = im.rotate(-graus, expand=True)
     desa(im, cami, qualitat, original=cami)
@@ -299,6 +304,15 @@ class Editor(QWidget):
             b = QPushButton(t("ef_" + clau))
             b.clicked.connect(lambda _, c=clau: self.op(EFECTES[c]))
             gl.addWidget(b, i // 2, i % 2)
+        n = len(EFECTES)
+        import eines_foto as EF
+        for i, (txt, f) in enumerate([(t("ef_nivells") + "…", lambda: self._dialeg(EF.DialegNivells)),
+                                      (t("ef_corbes") + "…", lambda: self._dialeg(EF.DialegCorbes)),
+                                      (t("ef_text") + "…", lambda: self._dialeg(EF.DialegText)),
+                                      (t("ef_ulls"), self.ulls_vermells)]):
+            b = QPushButton(txt)
+            b.clicked.connect(f)
+            gl.addWidget(b, (n + i) // 2, (n + i) % 2)
         pl.addWidget(g)
         pl.addStretch()
 
@@ -488,6 +502,26 @@ class Editor(QWidget):
         self.b_aplica_aj.setEnabled(False)
         self.b_reset_aj.setEnabled(False)
 
+    # ------------------------------------------------- eines avançades
+    def _dialeg(self, classe):
+        import eines_foto as EF
+        self._confirma_ajustos()
+        self._surt_retall()
+        f = EF.amb_previsualitzacio(self, self.llenc, self.im, classe)
+        if f:
+            self.op(f)
+
+    def ulls_vermells(self):
+        import eines_foto as EF
+        r = self.llenc.retall if self.b_retall.isChecked() else None
+        if r is None or r.isNull():
+            QMessageBox.information(self, "Xoriguer Fotos", t("ed_ulls_primer"))
+            self.b_retall.setChecked(True)
+            self.c_prop.setCurrentIndex(0)
+            return
+        caixa = (int(round(r.left())), int(round(r.top())), int(round(r.right())), int(round(r.bottom())))
+        self.op(lambda im: EF.ulls_vermells(im, caixa))
+
     # ------------------------------------------------------ redimensiona
     def canvia_mida(self):
         self._confirma_ajustos()
@@ -502,6 +536,10 @@ class Editor(QWidget):
         self._confirma_ajustos()
         if not self.modificat:
             return True
+        if IM.extensio(self.cami) in IM.NOMES_LECTURA or IM.extensio(self.cami) not in FORMATS_DESA:
+            QMessageBox.information(self, "Xoriguer Fotos", t("e_nomes_lectura"))
+            self.desa_com()
+            return not self.modificat
         return self._desa_a(self.cami)
 
     def _desa_a(self, cami):

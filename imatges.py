@@ -16,7 +16,38 @@ _QT = {bytes(f).decode().lower() for f in QImageReader.supportedImageFormats()}
 _QT_EXT = {e for e in ("jpg", "jpeg", "jpe", "jfif", "png", "bmp", "gif", "webp", "tif", "tiff", "ico") if
            (e in _QT or {"jpe": "jpeg", "jfif": "jpeg", "tif": "tiff"}.get(e, "") in _QT)}
 _PIL_EXT = {"tga", "psd", "pcx", "ppm", "pgm", "pbm", "dds", "jp2", "j2k"}
-EXTENSIONS = _QT_EXT | _PIL_EXT
+
+# HEIC/HEIF (iPhone) i AVIF: amb pillow-heif, si hi és
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    HEIF_EXT = {"heic", "heif", "hif"}
+except Exception:
+    HEIF_EXT = set()
+try:
+    from PIL import AvifImagePlugin  # noqa: F401  (Pillow 11.2+)
+    HEIF_EXT |= {"avif"}
+except Exception:
+    pass
+# RAW de càmera: amb rawpy (LibRaw), si hi és
+try:
+    import rawpy
+    RAW_EXT = {"cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "dng", "orf", "rw2", "raf", "pef", "srw",
+               "raw", "rwl", "3fr", "erf", "kdc", "mrw", "x3f", "iiq", "mef", "mos"}
+except Exception:
+    rawpy = None
+    RAW_EXT = set()
+EXTENSIONS = _QT_EXT | _PIL_EXT | HEIF_EXT | RAW_EXT
+# formats que es poden mostrar però no sobreescriure (cal «Desa com a»)
+NOMES_LECTURA = HEIF_EXT | RAW_EXT | {"psd", "dds", "pcx", "jp2", "j2k", "pgm", "pbm", "ppm"}
+
+
+def extensio(cami):
+    return os.path.splitext(cami)[1][1:].lower()
+
+
+def es_raw(cami):
+    return extensio(cami) in RAW_EXT
 
 
 def es_imatge(nom):
@@ -38,8 +69,55 @@ def pil_a_qimage(im):
     return QImage(dades, im.width, im.height, im.width * 4, QImage.Format.Format_RGBA8888).copy()
 
 
+def qimage_a_pil(img):
+    img = img.convertToFormat(QImage.Format.Format_RGBA8888)
+    dades = img.constBits().asstring(img.sizeInBytes())
+    return Image.frombuffer("RGBA", (img.width(), img.height()), dades, "raw", "RGBA", img.bytesPerLine(), 1).copy()
+
+
+_GIR_RAW = {3: 180, 5: 90, 6: -90}   # rawpy sizes.flip -> graus per a QTransform (sentit horari)
+
+
+def _raw_pil(cami, mig=False):
+    with rawpy.imread(cami) as r:
+        rgb = r.postprocess(use_camera_wb=True, half_size=mig, output_bps=8)
+    return Image.fromarray(rgb)
+
+
+def _raw_qimage(cami, costat_max=None):
+    """Miniatures: la JPEG incrustada (instantània). Visor: el revelat complet."""
+    from PyQt6.QtGui import QTransform
+    if costat_max:
+        try:
+            with rawpy.imread(cami) as r:
+                gir = _GIR_RAW.get(r.sizes.flip, 0)
+                th = r.extract_thumb()
+            if th.format == rawpy.ThumbFormat.JPEG:
+                img = QImage.fromData(th.data)
+            else:
+                img = pil_a_qimage(Image.fromarray(th.data))
+            if not img.isNull():
+                if gir:
+                    img = img.transformed(QTransform().rotate(-gir if gir != 180 else 180))
+                if max(img.width(), img.height()) > costat_max:
+                    img = img.scaled(costat_max, costat_max, Qt.AspectRatioMode.KeepAspectRatio,
+                                     Qt.TransformationMode.SmoothTransformation)
+                return img
+        except Exception:
+            pass
+    try:
+        im = _raw_pil(cami, mig=bool(costat_max))
+        if costat_max:
+            im.thumbnail((costat_max, costat_max), Image.Resampling.LANCZOS)
+        return pil_a_qimage(im)
+    except Exception:
+        return QImage()
+
+
 def obre_pil(cami):
     """Obre amb Pillow, aplica l'orientació EXIF i normalitza el mode (RGB/RGBA)."""
+    if es_raw(cami):
+        return _raw_pil(cami)
     im = Image.open(cami)
     im.load()
     try:
@@ -55,6 +133,8 @@ def obre_pil(cami):
 
 def carrega_qimage(cami, costat_max=None):
     """Llegeix una imatge tan ràpid com es pugui. Amb costat_max, el JPEG es descodifica ja reduït."""
+    if es_raw(cami):
+        return _raw_qimage(cami, costat_max)
     lector = QImageReader(cami)
     lector.setAutoTransform(True)
     if costat_max:
@@ -80,6 +160,13 @@ def carrega_qimage(cami, costat_max=None):
 
 
 def mida_imatge(cami):
+    if es_raw(cami):
+        try:
+            with rawpy.imread(cami) as r:
+                w, h = r.sizes.width, r.sizes.height
+                return (h, w) if r.sizes.flip in (5, 6) else (w, h)
+        except Exception:
+            return 0, 0
     lector = QImageReader(cami)
     lector.setAutoTransform(True)
     s = lector.size()

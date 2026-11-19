@@ -12,16 +12,17 @@ from PyQt6.QtCore import (QAbstractListModel, QDir, QFileSystemWatcher, QModelIn
 from PyQt6.QtGui import (QAction, QActionGroup, QColor, QFileSystemModel, QFont, QGuiApplication, QKeySequence, QPainter,
                          QPen, QPixmap)
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
-                             QLineEdit, QListView, QMainWindow, QMessageBox, QSlider, QSplitter, QStyle,
+                             QLineEdit, QListView, QMainWindow, QMessageBox, QPushButton, QSlider, QSplitter, QStyle,
                              QStyledItemDelegate, QToolBar, QToolButton, QTreeView, QVBoxLayout, QWidget)
 
 import config
 import estil as E
 import i18n
 import imatges as IM
+import valoracions as VAL
 from i18n import t
 
-VERSIO = "1.1"
+VERSIO = "1.2"
 ROL_CAMI = Qt.ItemDataRole.UserRole
 
 
@@ -51,6 +52,11 @@ class ModelMiniatures(QAbstractListModel):
             if self.fitxers:
                 self.dataChanged.emit(self.index(0), self.index(len(self.fitxers) - 1))
 
+    def repinta(self, cami):
+        r = self.fila.get(cami)
+        if r is not None:
+            self.dataChanged.emit(self.index(r), self.index(r), [Qt.ItemDataRole.DisplayRole])
+
     def oblida(self, cami):
         self.cau.pop(cami, None)
         r = self.fila.get(cami)
@@ -75,7 +81,10 @@ class ModelMiniatures(QAbstractListModel):
         if rol == ROL_CAMI:
             return f["cami"]
         if rol == Qt.ItemDataRole.ToolTipRole:
-            return f"{f['nom']}\n{mida_text(f['mida'])}"
+            extra = VAL.text_estrelles(VAL.estrelles(f["cami"]))
+            et = VAL.etiquetes(f["cami"])
+            return f"{f['nom']}\n{mida_text(f['mida'])}" + (f"\n{extra}" if extra else "") + (
+                f"\n{', '.join(et)}" if et else "")
         return None
 
     def _feta(self, cami, costat, img):
@@ -117,6 +126,19 @@ class DelegatMiniatura(QStyledItemDelegate):
             desti = QRectF(area.x() + (area.width() - w) / 2, area.y() + (area.height() - h) / 2, w, h)
             p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
             p.drawPixmap(desti, pm, QRectF(pm.rect()))
+            cami = idx.data(ROL_CAMI)
+            n = VAL.estrelles(cami) if cami else 0
+            et = VAL.etiquetes(cami) if cami else []
+            if n or et:
+                txt = ("★" * n) + ("  🏷" if et else "")
+                fm = opt.fontMetrics
+                caixa = QRectF(desti.right() - fm.horizontalAdvance(txt) - 14, desti.bottom() - 22,
+                               fm.horizontalAdvance(txt) + 10, 19)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(26, 37, 51, 210))
+                p.drawRoundedRect(caixa, 6, 6)
+                p.setPen(QColor(E.OR1))
+                p.drawText(caixa, Qt.AlignmentFlag.AlignCenter, txt)
         else:
             p.setPen(QColor(E.LINE))
             p.setBrush(Qt.BrushStyle.NoBrush)
@@ -143,6 +165,7 @@ def mida_text(b):
 # ================================================================== finestra
 class Finestra(QMainWindow):
     canvi_idioma = pyqtSignal(str)
+    meta_llesta = pyqtSignal(str)
 
     MIDES = [64, 96, 128, 160, 200, 256, 320]
 
@@ -234,10 +257,42 @@ class Finestra(QMainWindow):
         cap.addWidget(QLabel(t("o_ordena")))
         cap.addWidget(self.c_ordre)
         cap.addWidget(self.b_invers)
+        self.b_filtre = QToolButton(checkable=True)
+        self.b_filtre.setText("⚲ " + t("fl_filtra"))
+        self.b_filtre.setToolTip(t("fl_filtra") + "  (Ctrl+F)")
+        self.b_filtre.toggled.connect(self._mostra_filtres)
+        cap.addWidget(self.b_filtre)
+        # barra de filtres
+        self.barra_filtres = QWidget()
+        bf = QHBoxLayout(self.barra_filtres)
+        bf.setContentsMargins(0, 2, 0, 2)
+        self.f_text = QLineEdit(placeholderText=t("fl_cerca"), clearButtonEnabled=True)
+        self.f_estr = QComboBox()
+        self.f_estr.addItem(t("fl_totes"), 0)
+        for k in range(1, 6):
+            self.f_estr.addItem("★" * k + ("+" if k < 5 else ""), k)
+        self.f_cam = QComboBox()
+        self.f_cam.addItem(t("fl_totes_cameres"), "")
+        self.f_mes = QComboBox()
+        self.f_mes.addItem(t("fl_totes_dates"), "")
+        self.f_info = QLabel(objectName="suau")
+        b_net = QPushButton(t("fl_neteja"))
+        b_net.clicked.connect(self._neteja_filtres)
+        for w in (self.f_text, self.f_estr, self.f_cam, self.f_mes, self.f_info, b_net):
+            bf.addWidget(w, 2 if w is self.f_text else 0)
+        self.f_text.textChanged.connect(lambda _: self._temps_filtre.start(200))
+        for c in (self.f_estr, self.f_cam, self.f_mes):
+            c.currentIndexChanged.connect(lambda _: self._aplica_filtre())
+        self._temps_filtre = QTimer(self, singleShot=True, timeout=self._aplica_filtre)
+        self.barra_filtres.hide()
+        self.tots = []
+        self._meta = {}
+        self.meta_llesta.connect(lambda c: c == self.carpeta and self._omple_combos())
         dreta = QWidget()
         dl = QVBoxLayout(dreta)
         dl.setContentsMargins(0, 0, 0, 0)
         dl.addLayout(cap)
+        dl.addWidget(self.barra_filtres)
         dl.addWidget(self.llista, 1)
 
         self.split = QSplitter(Qt.Orientation.Horizontal)
@@ -321,6 +376,7 @@ class Finestra(QMainWindow):
         self._accio(t("a_obre_fitxer") + "…", self.tria_fitxer, "Ctrl+Shift+O", None, m)
         m.addSeparator()
         self._accio(t("a_lots") + "…", self.lots, "Ctrl+B", "lots", m)
+        self._accio(t("cr_titol") + "…", self.correu, "F6", None, m)
         m.addSeparator()
         self._accio(t("a_surt"), self.close, "Alt+F4", None, m)
 
@@ -333,10 +389,18 @@ class Finestra(QMainWindow):
         m.addSeparator()
         self._accio(t("a_copia_imatge"), self.copia_imatge, "Ctrl+C", None, m, local=True)
         self._accio(t("a_selecciona_tot"), self.llista.selectAll, "Ctrl+A", None, m, local=True)
+        m.addSeparator()
+        sm = m.addMenu(t("vl_valoracio"))
+        for k in range(6):
+            self._accio(VAL.text_estrelles(k) or t("vl_sense"), lambda k=k: self.posa_estrelles(k), f"Ctrl+{k}",
+                        None, sm, local=True)
+        self._accio(t("vl_etiquetes") + "…", self.etiquetes, "T", None, m, local=True)
 
         m = mb.addMenu(t("m_visualitza"))
         self._accio(t("a_visualitza"), lambda: self.obre_visor(), ["Return", "Enter"], "foto", m, local=True)
         self._accio(t("a_presentacio"), self.presentacio, "Ctrl+P", "presentacio", m)
+        self._accio(t("cm_titol"), self.compara, "P", None, m, local=True)
+        self._accio(t("fl_filtra"), lambda: self.b_filtre.toggle(), "Ctrl+F", None, m)
         m.addSeparator()
         self._accio(t("a_enrere"), self.enrere, ["Alt+Left"], "enrere", m)
         self._accio(t("a_endavant"), self.endavant, ["Alt+Right"], "endavant", m)
@@ -347,9 +411,16 @@ class Finestra(QMainWindow):
         self._accio(t("a_mes_petites"), lambda: self.sl_mida.setValue(self.sl_mida.value() - 1), "Ctrl+-", None, m)
 
         m = mb.addMenu(t("m_eines"))
+        self._accio(t("du_titol") + "…", self.duplicats, "Ctrl+D", None, m)
+        self._accio(t("pr_titol") + "…", self.opcions_presentacio, None, None, m)
+        m.addSeparator()
         self._accio(t("a_fons"), self.fons_escriptori, None, "fons", m)
         self._accio(t("a_explorador"), self.explorador, "Ctrl+Shift+E", None, m)
         m.addSeparator()
+        a = self._accio(t("a_sense_perdua"), lambda: None, None, None, m)
+        a.setCheckable(True)
+        a.setChecked(config.get("gir_sense_perdua") is not False)
+        a.toggled.connect(lambda v: config.set("gir_sense_perdua", v))
         a = self._accio(t("a_confirma_elim"), lambda: None, None, None, m)
         a.setCheckable(True)
         a.setChecked(config.get("confirma_eliminar"))
@@ -358,14 +429,6 @@ class Finestra(QMainWindow):
         a.setCheckable(True)
         a.setChecked(config.get("amplia_petites"))
         a.toggled.connect(lambda v: config.set("amplia_petites", v))
-        sm = m.addMenu(t("a_segons"))
-        g = QActionGroup(self)
-        for s in (2, 3, 4, 5, 7, 10, 15):
-            a = sm.addAction(f"{s} s")
-            a.setCheckable(True)
-            a.setChecked(config.get("segons_presentacio") == s)
-            a.triggered.connect(lambda _, s=s: config.set("segons_presentacio", s))
-            g.addAction(a)
 
         m = mb.addMenu("🌐 " + t("m_idioma"))
         g = QActionGroup(self)
@@ -386,6 +449,7 @@ class Finestra(QMainWindow):
                            ("a_obre_carpeta", "carpeta", self.tria_carpeta), None,
                            ("a_visualitza", "foto", lambda: self.obre_visor()),
                            ("a_presentacio", "presentacio", self.presentacio),
+                           ("cm_titol", "ajusta", self.compara),
                            ("a_edita", "edita", self.edita), None,
                            ("a_gira_e", "gira", lambda: self.gira_seleccio(-90)),
                            ("a_gira_d", "gira", lambda: self.gira_seleccio(90)), None,
@@ -393,13 +457,14 @@ class Finestra(QMainWindow):
                            ("a_mou_a", "mou", lambda: self.copia_mou(True)),
                            ("a_reanomena", "reanomena", self.reanomena),
                            ("a_elimina", "elimina", self.elimina), None,
-                           ("a_lots", "lots", self.lots), ("a_fons", "fons", self.fons_escriptori)]:
+                           ("a_lots", "lots", self.lots), ("cr_curt", "copia", self.correu),
+                           ("a_fons", "fons", self.fons_escriptori)]:
             if element is None:
                 tb.addSeparator()
                 continue
             nom, ic, f = element
             a = QAction(E.icona(ic, mirall=(nom == "a_gira_e")), t(nom + "_curt") if i18n.te(nom + "_curt") else t(nom), self)
-            a.setToolTip(t(nom))
+            a.setToolTip(t("cr_titol") if nom == "cr_curt" else t(nom))
             a.triggered.connect(lambda *_, f=f: f())
             tb.addAction(a)
 
@@ -451,7 +516,10 @@ class Finestra(QMainWindow):
 
     def _carrega_llista(self, seleccio=None, conserva_scroll=False):
         scroll = self.llista.verticalScrollBar().value()
-        self.model.posa_fitxers(self._llegeix())
+        self.tots = self._llegeix()
+        if self.barra_filtres.isVisible():
+            self._llegeix_meta()
+        self.model.posa_fitxers(self._filtra(self.tots))
         if conserva_scroll:
             QTimer.singleShot(0, lambda: self.llista.verticalScrollBar().setValue(scroll))
         if seleccio and seleccio in self.model.fila:
@@ -461,6 +529,147 @@ class Finestra(QMainWindow):
         else:
             self._actualitza_prev()
         self._seleccio_canviada()
+
+    # ------------------------------------------------------------ filtres
+    def _mostra_filtres(self, v):
+        self.barra_filtres.setVisible(v)
+        if v:
+            self._llegeix_meta()
+            self.f_text.setFocus()
+        self._aplica_filtre()
+
+    def _neteja_filtres(self):
+        for w in (self.f_estr, self.f_cam, self.f_mes):
+            w.blockSignals(True)
+            w.setCurrentIndex(0)
+            w.blockSignals(False)
+        self.f_text.clear()
+        self._aplica_filtre()
+
+    def _llegeix_meta(self):
+        """Càmera i mes de cada foto (en segon pla) per omplir els filtres."""
+        import threading
+        falten = [f for f in self.tots if self._meta.get(f["cami"], (None, None, 0))[2] != f["mtime"]]
+        if not falten:
+            self._omple_combos()
+            return
+        self.f_info.setText(t("fl_llegint"))
+        from datetime import datetime
+
+        def feina(fitxers, carpeta):
+            for f in fitxers:
+                ex = IM.info_exif(f["cami"])
+                d = ex.get("data", "")
+                mes = d[:7] if len(d) >= 7 and d[4] == "-" else datetime.fromtimestamp(f["mtime"]).strftime("%Y-%m")
+                self._meta[f["cami"]] = (ex.get("camera", ""), mes, f["mtime"])
+            self.meta_llesta.emit(carpeta)
+        threading.Thread(target=feina, args=(falten, self.carpeta), daemon=True).start()
+
+    def _omple_combos(self):
+        self.f_info.setText("")
+        cams = sorted({self._meta[f["cami"]][0] for f in self.tots if f["cami"] in self._meta} - {""})
+        mesos = sorted({self._meta[f["cami"]][1] for f in self.tots if f["cami"] in self._meta}, reverse=True)
+        for combo, valors, primer in ((self.f_cam, cams, t("fl_totes_cameres")), (self.f_mes, mesos, t("fl_totes_dates"))):
+            actual = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(primer, "")
+            for v in valors:
+                combo.addItem(v, v)
+            combo.setCurrentIndex(max(0, combo.findData(actual)))
+            combo.blockSignals(False)
+        self._aplica_filtre()
+
+    def _filtra(self, fitxers):
+        if not self.barra_filtres.isVisible():
+            return list(fitxers)
+        text = self.f_text.text().strip().lower()
+        estr = self.f_estr.currentData() or 0
+        cam = self.f_cam.currentData() or ""
+        mes = self.f_mes.currentData() or ""
+        res = []
+        for f in fitxers:
+            c = f["cami"]
+            if estr and VAL.estrelles(c) < estr:
+                continue
+            if text and text not in f["nom"].lower() and not any(text in e.lower() for e in VAL.etiquetes(c)):
+                continue
+            meta = self._meta.get(c)
+            if cam and (not meta or meta[0] != cam):
+                continue
+            if mes and (not meta or meta[1] != mes):
+                continue
+            res.append(f)
+        return res
+
+    def _aplica_filtre(self):
+        actual = self.actual()
+        filtrats = self._filtra(self.tots)
+        self.model.posa_fitxers(filtrats)
+        if self.barra_filtres.isVisible() and not self.f_info.text().startswith(t("fl_llegint")):
+            self.f_info.setText(t("fl_resultat", n=len(filtrats), m=len(self.tots)))
+        if actual and actual in self.model.fila:
+            self.selecciona(actual)
+        elif self.model.fitxers:
+            self.llista.setCurrentIndex(self.model.index(0))
+        self._seleccio_canviada()
+        self._temps_prev.start(60)
+
+    # ----------------------------------------------- estrelles i etiquetes
+    def posa_estrelles(self, n):
+        camins = self.seleccionats()
+        if camins:
+            VAL.posa_estrelles(camins, n)
+            for c in camins:
+                self.model.repinta(c)
+            self._temps_prev.start(30)
+            if self.barra_filtres.isVisible() and self.f_estr.currentData():
+                self._aplica_filtre()
+
+    def etiquetes(self):
+        camins = self.seleccionats()
+        if camins:
+            from panells import dialeg_etiquetes
+            if dialeg_etiquetes(self, camins):
+                for c in camins:
+                    self.model.repinta(c)
+                self._temps_prev.start(30)
+
+    def _valoracio_visor(self, cami):
+        self.model.repinta(cami)
+        if cami == self._prev_cami:
+            self._temps_prev.start(30)
+
+    # ---------------------------------------------------- eines noves
+    def compara(self):
+        camins = self.seleccionats()
+        if len(camins) < 2:
+            QMessageBox.information(self, t("cm_titol"), t("cm_tria"))
+            return
+        if len(camins) > 4:
+            camins = camins[:4]
+        from comparador import Comparador
+        self._comp = Comparador(camins, self.memoria)
+        self._comp.eliminada.connect(self._eliminada)
+        self._comp.obre.connect(lambda c: (self.selecciona(c), self.obre_visor()))
+        self._comp.showMaximized()
+
+    def duplicats(self):
+        from duplicats import DialegDuplicats
+        d = DialegDuplicats(self.carpeta, self)
+        d.eliminades.connect(lambda llista: [(self.memoria.oblida(c), self._eliminada(c)) for c in llista])
+        d.obre.connect(self.obre_visor_llista)
+        d.exec()
+
+    def correu(self):
+        camins = self.seleccionats()
+        if camins:
+            from correu import DialegCorreu
+            DialegCorreu(camins, self).exec()
+
+    def opcions_presentacio(self):
+        from presentacio import DialegPresentacio
+        DialegPresentacio(self).exec()
 
     def selecciona(self, cami):
         r = self.model.fila.get(os.path.normpath(cami))
@@ -581,6 +790,12 @@ class Finestra(QMainWindow):
             files.append(tec)
         if "data" in ex:
             files.append(t("i_data") + ": " + ex["data"])
+        n = VAL.estrelles(cami)
+        if n:
+            files.append(f"<span style='color:{E.OR1}'>{VAL.text_estrelles(n)}</span>")
+        et = VAL.etiquetes(cami)
+        if et:
+            files.append("🏷 " + ", ".join(et))
         self.prev_info.setText("<br>".join(files))
 
     def _prev_feta(self, cami, costat, img):
@@ -601,8 +816,10 @@ class Finestra(QMainWindow):
         if fila is None:
             i = self.llista.currentIndex()
             fila = i.row() if i.isValid() else 0
+        self.obre_visor_llista([f["cami"] for f in self.model.fitxers], fila, presentacio)
+
+    def obre_visor_llista(self, camins, fila=0, presentacio=False):
         from visor import Visor
-        camins = [f["cami"] for f in self.model.fitxers]
         if self.visor is not None:
             self.visor.close()
         self.visor = Visor(camins, fila, self.memoria)
@@ -612,6 +829,7 @@ class Finestra(QMainWindow):
         self.visor.desat.connect(self._desat)
         self.visor.canvi_fitxers.connect(lambda: self.refresca(conserva=True))
         self.visor.surt.connect(lambda: QTimer.singleShot(0, self.close))
+        self.visor.valoracio.connect(self._valoracio_visor)
         self.visor.showFullScreen()
         self.visor.activateWindow()
         if presentacio:
@@ -664,6 +882,7 @@ class Finestra(QMainWindow):
 
     # --------------------------------------------------- operacions fitxer
     def _eliminada(self, cami):
+        self.tots = [f for f in self.tots if f["cami"] != cami]
         r = self.model.fila.get(cami)
         if r is None:
             return
@@ -716,6 +935,7 @@ class Finestra(QMainWindow):
         except OSError as e:
             QMessageBox.warning(self, "Xoriguer Fotos", str(e))
             return
+        VAL.mou(cami, desti)
         self.memoria.oblida(cami)
         self._carrega_llista(desti, conserva_scroll=True)
 
@@ -739,10 +959,12 @@ class Finestra(QMainWindow):
                 try:
                     if moure:
                         shutil.move(c, desti)
+                        VAL.mou(c, desti)
                         self.memoria.oblida(c)
                         self._eliminada(c)
                     else:
                         shutil.copy2(c, desti)
+                        VAL.copia(c, desti)
                 except OSError as e:
                     errors.append(f"{os.path.basename(c)}: {e}")
         finally:
@@ -812,12 +1034,16 @@ class Finestra(QMainWindow):
                        ("a_copia_a", lambda: self.copia_mou(False)), ("a_mou_a", lambda: self.copia_mou(True)),
                        ("a_reanomena", self.reanomena), ("a_elimina", self.elimina), None,
                        ("a_copia_imatge", self.copia_imatge), ("a_fons", self.fons_escriptori),
-                       ("a_explorador", self.explorador), ("a_lots", self.lots)]:
+                       ("a_explorador", self.explorador), ("a_lots", self.lots), None,
+                       ("cm_titol", self.compara), ("vl_etiquetes", self.etiquetes), ("cr_titol", self.correu)]:
             if element is None:
                 m.addSeparator()
             else:
                 nom, f = element
                 m.addAction(t(nom)).triggered.connect(lambda *_, f=f: f())
+        sm = m.addMenu(t("vl_valoracio"))
+        for k in range(6):
+            sm.addAction(VAL.text_estrelles(k) or t("vl_sense")).triggered.connect(lambda *_, k=k: self.posa_estrelles(k))
         m.exec(self.llista.viewport().mapToGlobal(pos))
 
     # --------------------------------------------------------------- ajuda
@@ -828,7 +1054,11 @@ class Finestra(QMainWindow):
                  ("E", t("a_edita")), ("S", t("a_presentacio")), ("I", t("v_info")),
                  ("Supr", t("a_elimina")), ("F2", t("a_reanomena")), ("F5", t("a_refresca")),
                  ("Backspace", t("a_amunt")), ("F11", t("v_pantalla")), ("Esc", t("v_tanca")),
-                 ("Ctrl+Z / Ctrl+Y", t("ed_desfes") + " / " + t("ed_refes"))]
+                 ("Ctrl+Z / Ctrl+Y", t("ed_desfes") + " / " + t("ed_refes")),
+                 ("Ctrl+0 … Ctrl+5", t("vl_valoracio")), ("T", t("vl_etiquetes")), ("P", t("cm_titol")),
+                 ("Ctrl+F", t("fl_filtra")), ("Ctrl+D", t("du_titol")), ("F6", t("cr_titol")),
+                 ("G / " + t("roda_mig"), t("v_lupa")), ("U", t("ef_ulls")), ("X", t("ed_retalla")),
+                 ("Ctrl+L / Ctrl+M", t("ef_nivells") + " / " + t("ef_corbes")), ("Ctrl+Shift+T", t("ef_text"))]
         html = "<table cellspacing='4'>" + "".join(
             f"<tr><td style='color:{E.OR1}; padding-right:14px'><b>{a}</b></td><td>{b}</td></tr>" for a, b in files) + "</table>"
         QMessageBox.information(self, t("a_dreceres"), html)
@@ -872,6 +1102,21 @@ def main():
             pass
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
+    if "--autoprova" in sys.argv:   # comprovació de l'executable compilat: escriu què hi ha disponible i surt
+        res = [f"heif={sorted(IM.HEIF_EXT)}", f"raw={len(IM.RAW_EXT)}", f"qt={sorted(IM._QT_EXT)}"]
+        try:
+            from PyQt6.QtMultimedia import QMediaPlayer
+            res.append(f"multimedia=ok {QMediaPlayer.__name__}")
+        except Exception as e:
+            res.append(f"multimedia=ERROR {e}")
+        try:
+            from PyQt6.QtPrintSupport import QPrinter  # noqa: F401
+            res.append("impressio=ok")
+        except Exception as e:
+            res.append(f"impressio=ERROR {e}")
+        with open(os.path.join(os.environ.get("TEMP", "."), "xoriguerfotos_autoprova.txt"), "w", encoding="utf-8") as f:
+            f.write("\n".join(res))
+        return
     app.setApplicationName("Xoriguer Fotos")
     app.setWindowIcon(E.icona_app())
     config.carrega()
