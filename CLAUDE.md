@@ -12,5 +12,5 @@ Visualitzador i editor de fotos ràpid, només per a Windows (estil FastStone). 
   (glifs de Segoe Fluent Icons). `config.py` preferències a `%APPDATA%\XoriguerFotos\config.json`.
 
 Compilar: `compilar.bat` → `dist\XoriguerFotos\XoriguerFotos.exe` (mode carpeta, arrenca més ràpid) i
-`XoriguerFotos_Setup_v1.0.exe` (Inno Setup, sense permisos d'administrador; opció d'afegir-se a «Obre amb»).
+`XoriguerFotos_Setup_v<versió>.exe` (Inno Setup, sense permisos d'administrador; opció d'afegir-se a «Obre amb»).
 En pujar de versió: `VERSIO` a `main.py`, `version_info.txt` i `MyAppVersion` a l'`.iss`.

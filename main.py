@@ -21,7 +21,7 @@ import i18n
 import imatges as IM
 from i18n import t
 
-VERSIO = "1.0"
+VERSIO = "1.1"
 ROL_CAMI = Qt.ItemDataRole.UserRole
 
 
@@ -609,6 +609,9 @@ class Finestra(QMainWindow):
         self.visor.tancat.connect(self._visor_tancat)
         self.visor.eliminada.connect(self._eliminada)
         self.visor.editar.connect(self.obre_editor)
+        self.visor.desat.connect(self._desat)
+        self.visor.canvi_fitxers.connect(lambda: self.refresca(conserva=True))
+        self.visor.surt.connect(lambda: QTimer.singleShot(0, self.close))
         self.visor.showFullScreen()
         self.visor.activateWindow()
         if presentacio:

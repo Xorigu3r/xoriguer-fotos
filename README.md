@@ -42,6 +42,6 @@ compilar.bat
 ```
 
 Fa `dist\XoriguerFotos\XoriguerFotos.exe` (PyInstaller, mode carpeta perquè arrenqui més ràpid) i
-`XoriguerFotos_Setup_v1.0.exe`.
+`XoriguerFotos_Setup_v<versió>.exe`.
 
 Fet amb Python, PyQt6 i Pillow. Creat per Xavier Musté.

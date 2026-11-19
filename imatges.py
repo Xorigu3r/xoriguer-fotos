@@ -125,6 +125,33 @@ def info_exif(cami):
             lent = ifd.get(42036)
             if lent:
                 res["objectiu"] = str(lent).strip()
+            if marca:
+                res["marca"] = marca
+            if model:
+                res["model"] = model
+            sw = str(ex.get(305, "")).strip()
+            if sw:
+                res["software"] = sw
+            prog = ifd.get(34850)
+            if prog:
+                res["programa"] = int(prog)
+            bias = ifd.get(37380)
+            if bias is not None:
+                res["compensacio"] = f"{float(bias):+.1f} EV"
+            fl = ifd.get(37385)
+            if fl is not None:
+                res["flash"] = bool(int(fl) & 1)
+            f35 = ifd.get(41989)
+            if f35:
+                res["focal35"] = f"{int(f35)} mm"
+            gps = ex.get_ifd(0x8825)
+            if gps and 2 in gps and 4 in gps:
+                def graus(v, ref):
+                    d = float(v[0]) + float(v[1]) / 60 + float(v[2]) / 3600
+                    return -d if str(ref).upper() in ("S", "W") else d
+                res["gps"] = (graus(gps[2], gps.get(1, "N")), graus(gps[4], gps.get(3, "E")))
+            res["dpi"] = im.info.get("dpi")
+            res["format"] = im.format
     except Exception:
         pass
     return res
