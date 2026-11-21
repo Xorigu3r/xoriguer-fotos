@@ -1118,23 +1118,14 @@ class Visor(QWidget):
             subprocess.Popen(["explorer", "/select,", cami])
 
     def imprimeix(self):
-        if self.llenc.img.isNull():
+        if self.llenc.img.isNull() or not self.actual():
             return
-        from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
-        pr = QPrinter(QPrinter.PrinterMode.HighResolution)
-        img = self.llenc.img
-        if img.width() > img.height():
-            from PyQt6.QtGui import QPageLayout
-            pr.setPageOrientation(QPageLayout.Orientation.Landscape)
-        if QPrintDialog(pr, self).exec():
-            p = QPainter(pr)
-            r = p.viewport()
-            mida = img.size().scaled(r.size(), Qt.AspectRatioMode.KeepAspectRatio)
-            p.setViewport(r.x() + (r.width() - mida.width()) // 2, r.y() + (r.height() - mida.height()) // 2,
-                          mida.width(), mida.height())
-            p.setWindow(img.rect())
-            p.drawImage(0, 0, img)
-            p.end()
+        if self.temporitzador.isActive():
+            self.alterna_presentacio()
+        from impressio import DialegImpressio
+        # s'imprimeix el que es veu, també amb els retocs encara no desats
+        img = IM.pil_a_qimage(self.edicio) if self.edicio is not None else self.llenc.img
+        DialegImpressio([(self.actual(), img)], self).exec()
 
     def alterna_presentacio(self):
         if self.temporitzador.isActive():

@@ -140,7 +140,7 @@ G = {
     "tanca": "", "copia": "", "mou": "", "reanomena": "",
     "ordena": "", "idioma": "", "play": "", "pausa": "",
     "lots": "", "fons": "", "anterior": "", "seguent": "",
-    "volteja": "", "ajustos": "", "mida": "", "inici": "",
+    "volteja": "", "imprimeix": "", "ajustos": "", "mida": "", "inici": "",
 }
 
 

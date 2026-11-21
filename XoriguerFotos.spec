@@ -12,7 +12,7 @@ a = Analysis(
     binaries=[],
     datas=[('assets', 'assets'), ('fonts', 'fonts')],
     hiddenimports=['visor', 'editor', 'lots', 'i18n', 'config', 'estil', 'imatges', 'panells', 'orientacio',
-                   'eines_foto', 'valoracions', 'comparador', 'duplicats', 'correu', 'presentacio',
+                   'eines_foto', 'valoracions', 'impressio', 'comparador', 'duplicats', 'correu', 'presentacio',
                    'pillow_heif', 'rawpy', 'PyQt6.QtMultimedia', 'PyQt6.QtPrintSupport'],
     hookspath=[],
     hooksconfig={},

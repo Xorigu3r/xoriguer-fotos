@@ -22,7 +22,7 @@ import imatges as IM
 import valoracions as VAL
 from i18n import t
 
-VERSIO = "1.2"
+VERSIO = "1.3"
 ROL_CAMI = Qt.ItemDataRole.UserRole
 
 
@@ -377,6 +377,7 @@ class Finestra(QMainWindow):
         m.addSeparator()
         self._accio(t("a_lots") + "…", self.lots, "Ctrl+B", "lots", m)
         self._accio(t("cr_titol") + "…", self.correu, "F6", None, m)
+        self._accio(t("pe_imprimeix") + "…", self.imprimeix, "Ctrl+P", None, m)
         m.addSeparator()
         self._accio(t("a_surt"), self.close, "Alt+F4", None, m)
 
@@ -398,7 +399,7 @@ class Finestra(QMainWindow):
 
         m = mb.addMenu(t("m_visualitza"))
         self._accio(t("a_visualitza"), lambda: self.obre_visor(), ["Return", "Enter"], "foto", m, local=True)
-        self._accio(t("a_presentacio"), self.presentacio, "Ctrl+P", "presentacio", m)
+        self._accio(t("a_presentacio"), self.presentacio, "S", "presentacio", m, local=True)
         self._accio(t("cm_titol"), self.compara, "P", None, m, local=True)
         self._accio(t("fl_filtra"), lambda: self.b_filtre.toggle(), "Ctrl+F", None, m)
         m.addSeparator()
@@ -458,6 +459,7 @@ class Finestra(QMainWindow):
                            ("a_reanomena", "reanomena", self.reanomena),
                            ("a_elimina", "elimina", self.elimina), None,
                            ("a_lots", "lots", self.lots), ("cr_curt", "copia", self.correu),
+                           ("pe_imprimeix", "imprimeix", self.imprimeix),
                            ("a_fons", "fons", self.fons_escriptori)]:
             if element is None:
                 tb.addSeparator()
@@ -666,6 +668,12 @@ class Finestra(QMainWindow):
         if camins:
             from correu import DialegCorreu
             DialegCorreu(camins, self).exec()
+
+    def imprimeix(self):
+        camins = self.seleccionats()
+        if camins:
+            from impressio import DialegImpressio
+            DialegImpressio(camins, self).exec()
 
     def opcions_presentacio(self):
         from presentacio import DialegPresentacio
@@ -1035,7 +1043,8 @@ class Finestra(QMainWindow):
                        ("a_reanomena", self.reanomena), ("a_elimina", self.elimina), None,
                        ("a_copia_imatge", self.copia_imatge), ("a_fons", self.fons_escriptori),
                        ("a_explorador", self.explorador), ("a_lots", self.lots), None,
-                       ("cm_titol", self.compara), ("vl_etiquetes", self.etiquetes), ("cr_titol", self.correu)]:
+                       ("cm_titol", self.compara), ("vl_etiquetes", self.etiquetes), ("cr_titol", self.correu),
+                       ("pe_imprimeix", self.imprimeix)]:
             if element is None:
                 m.addSeparator()
             else:

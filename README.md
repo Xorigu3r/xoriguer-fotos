@@ -16,7 +16,7 @@ Visualitzador i editor de fotos ràpid per a Windows, gratis i sense anuncis. En
 - **Compara** 2–4 fotos una al costat de l'altra amb el zoom sincronitzat.
 - **Cerca duplicats**: idèntics o semblants (retocats, reduïts o recomprimits).
 - **Envia per correu**: redueix les fotos i obre un correu nou amb els adjunts.
-- **Fitxers**: copiar, moure, canviar el nom, paperera, fons d'escriptori, imprimir, conversió per lots.
+- **Fitxers**: copiar, moure, canviar el nom, paperera, fons d'escriptori, imprimir amb previsualització (impressora, paper, marges, mida, posició, orientació, còpies i gamma), conversió per lots.
 
 Formats: JPG, PNG, WebP, GIF, BMP, TIFF, ICO, **HEIC/HEIF (iPhone)**, **AVIF**, **RAW** de càmera (CR2, CR3, NEF, ARW, DNG,
 ORF, RW2, RAF...), TGA, PSD, PCX, PPM, JPEG 2000.
