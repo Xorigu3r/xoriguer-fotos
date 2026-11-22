@@ -442,6 +442,12 @@ T = {
     "im_pagina": ("Pàgina {i} de {n}", "Página {i} de {n}", "Page {i} sur {n}", "Page {i} of {n}"),
     "im_qualitat_baixa": ("poca resolució, es pot veure borrosa", "poca resolución, puede verse borrosa",
                           "résolution faible, peut être floue", "low resolution, may look blurry"),
+    "im_predeterminada": ("predeterminada", "predeterminada", "par défaut", "default"),
+    "im_no_disponible": ("no disponible", "no disponible", "indisponible", "not available"),
+    "im_en_error": ("La impressora «{nom}» està en error o desconnectada.\nVols imprimir a «{bona}»?",
+                    "La impresora «{nom}» está en error o desconectada.\n¿Quieres imprimir en «{bona}»?",
+                    "L'imprimante « {nom} » est en erreur ou déconnectée.\nImprimer sur « {bona} » ?",
+                    "The printer “{nom}” is in error or offline.\nPrint to “{bona}” instead?"),
     "im_cap_impressora": ("No s'ha pogut fer servir la impressora.", "No se ha podido usar la impresora.",
                           "Impossible d'utiliser l'imprimante.", "Could not use the printer."),
 

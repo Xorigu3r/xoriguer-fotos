@@ -192,12 +192,8 @@ class DialegImpressio(QDialog):
         gl = QVBoxLayout(g)
         fila = QHBoxLayout()
         self.c_imp = QComboBox()
-        noms = QPrinterInfo.availablePrinterNames()
-        self.c_imp.addItems(noms)
-        preferida = self.o.get("impressora") or QPrinterInfo.defaultPrinterName()
-        if preferida in noms:
-            self.c_imp.setCurrentText(preferida)
-        self.c_imp.currentTextChanged.connect(self._canvia_impressora)
+        self._omple_impressores()
+        self.c_imp.currentIndexChanged.connect(lambda _: self._canvia_impressora(self.c_imp.currentData()))
         b = QPushButton(t("im_paper") + "…")
         b.clicked.connect(self._configura_pagina)
         fila.addWidget(self.c_imp, 1)
@@ -318,7 +314,7 @@ class DialegImpressio(QDialog):
         arrel.addLayout(fila)
 
         self._omple_llista()
-        self._canvia_impressora(self.c_imp.currentText())
+        self._canvia_impressora(self.c_imp.currentData())
         self._carrega_opcions()
         self.resize(1180, 820)
 
@@ -358,7 +354,7 @@ class DialegImpressio(QDialog):
                 "orientacio": "horitzontal" if self.r_hor.isChecked() else "vertical",
                 "rotacio_auto": self.ch_rot.isChecked(), "unitats": self.c_unit.currentData(),
                 "copies": self.s_copies.value(), "gamma": self.s_gamma.value(), "nom": self.ch_nom.isChecked(),
-                "impressora": self.c_imp.currentText()}
+                "impressora": self.c_imp.currentData() or ""}
 
     def mida_pagina(self):
         r = self.printer.pageLayout().fullRect(QPageLayout.Unit.Millimeter)
@@ -430,6 +426,31 @@ class DialegImpressio(QDialog):
         self.o["_u_vell"] = nou
         self._refresca()
 
+    def _omple_impressores(self):
+        """La predeterminada de Windows primer; les que estan en error (p. ex. una còpia vella WSD) al final i marcades.
+        S'usa la preferida guardada només si continua existint i funciona; si no, la predeterminada."""
+        defecte = QPrinterInfo.defaultPrinterName()
+        infos = QPrinterInfo.availablePrinters()
+        self._estat_imp = {}
+        for info in infos:
+            self._estat_imp[info.printerName()] = info.state() == QPrinter.PrinterState.Error if False else \
+                info.state().name == "Error"
+        ordre = sorted(infos, key=lambda i: (i.printerName() != defecte, self._estat_imp[i.printerName()],
+                                              i.printerName().lower()))
+        for info in ordre:
+            nom = info.printerName()
+            text = nom
+            if nom == defecte:
+                text += "  (" + t("im_predeterminada") + ")"
+            if self._estat_imp[nom]:
+                text += "  — " + t("im_no_disponible")
+            self.c_imp.addItem(text, nom)
+        preferida = self.o.get("impressora") or ""
+        if preferida not in self._estat_imp or self._estat_imp[preferida]:
+            preferida = defecte
+        i = self.c_imp.findData(preferida)
+        self.c_imp.setCurrentIndex(max(0, i))
+
     def _canvia_impressora(self, nom):
         if nom:
             self.printer.setPrinterName(nom)
@@ -454,7 +475,7 @@ class DialegImpressio(QDialog):
             self._refresca()
 
     def _restableix(self):
-        imp = self.c_imp.currentText()
+        imp = self.c_imp.currentData() or ""
         self.o = dict(PER_DEFECTE)
         self.o["impressora"] = imp
         self._carrega_opcions()
@@ -487,11 +508,27 @@ class DialegImpressio(QDialog):
         pr.setFullPage(True)
         pr.setCopyCount(o["copies"])
         pr.setDocName("Xoriguer Fotos")
+        nom = self.c_imp.currentData() or ""
+        if self._estat_imp.get(nom):
+            defecte = QPrinterInfo.defaultPrinterName()
+            if defecte and defecte != nom and not self._estat_imp.get(defecte):
+                r = QMessageBox.question(self, t("im_titol"), t("im_en_error", nom=nom, bona=defecte))
+                if r != QMessageBox.StandardButton.Yes:
+                    return
+                self.c_imp.setCurrentIndex(self.c_imp.findData(defecte))
+                o = self.opcions()
+            else:
+                QMessageBox.warning(self, t("im_titol"), t("im_cap_impressora") + f"\n{nom}")
+                return
         if not pr.isValid():
             QMessageBox.warning(self, t("im_titol"), t("im_cap_impressora"))
             return
         self._desa_opcions()
-        self.imprimeix_a(pr, o)
+        try:
+            self.imprimeix_a(pr, o)
+        except Exception as e:
+            QMessageBox.warning(self, t("im_titol"), t("im_cap_impressora") + f"\n{e}")
+            return
         self.accept()
 
     def imprimeix_a(self, pr, o):
