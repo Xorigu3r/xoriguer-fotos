@@ -22,7 +22,7 @@ import imatges as IM
 import valoracions as VAL
 from i18n import t
 
-VERSIO = "1.3.1"
+VERSIO = "1.3.2"
 ROL_CAMI = Qt.ItemDataRole.UserRole
 
 

@@ -20,6 +20,8 @@ PER_DEFECTE = {"marges": [5.0, 5.0, 5.0, 5.0], "mida": "redueix", "esp_w": 100.0
                "posicio": "mc", "orientacio": "vertical", "rotacio_auto": True, "unitats": "cm", "copies": 1,
                "gamma": 1.0, "nom": False, "impressora": ""}
 POSICIONS = ["tl", "tc", "tr", "ml", "mc", "mr", "bl", "bc", "br"]
+# «cobreix»: omple tot el paper sense deformar (retalla el que sobra); «estira»: omple-ho tot deformant la foto
+MODES = ("original", "encaixa", "cobreix", "estira", "redueix", "especificada")
 FACTOR = {"cm": 10.0, "in": 25.4}          # mm per unitat
 
 
@@ -62,6 +64,11 @@ def disposa(pagina, w_px, h_px, dpi, o):
     mode = o["mida"]
     if mode == "original":
         w, h = iw / dpi * 25.4, ih / dpi * 25.4
+    elif mode == "cobreix":
+        s = max(util.width() / iw, util.height() / ih)
+        w, h = iw * s, ih * s
+    elif mode == "estira":
+        w, h = util.width(), util.height()
     elif mode == "especificada":
         w, h = o["esp_w"], o["esp_h"]
         if o["proporcio"]:
@@ -134,7 +141,7 @@ class Previsualitzacio(QWidget):
         img = aplica_gamma(img, o["gamma"])
         desti = QRectF(full.x() + r.x() * s, full.y() + r.y() * s, r.width() * s, r.height() * s)
         p.save()
-        p.setClipRect(full)
+        p.setClipRect(QRectF(full.x() + util.x() * s, full.y() + util.y() * s, util.width() * s, util.height() * s))
         p.drawImage(desti, img)
         p.restore()
         if o["nom"]:
@@ -236,7 +243,7 @@ class DialegImpressio(QDialog):
         g = QGroupBox(t("im_mida"))
         gs = QGridLayout(g)
         self.g_mida = QButtonGroup(self)
-        for i, k in enumerate(("original", "encaixa", "redueix", "especificada")):
+        for i, k in enumerate(MODES):
             r = QRadioButton(t("im_" + k))
             self.g_mida.addButton(r, i)
             gs.addWidget(r, i, 0, 1, 4)
@@ -247,10 +254,11 @@ class DialegImpressio(QDialog):
         self.s_h.valueChanged.connect(lambda v: self._esp_canviat("h"))
         self.ch_prop = QCheckBox(t("ed_mantén_proporcio"))
         self.ch_prop.toggled.connect(self._canvi)
-        gs.addWidget(self.s_w, 4, 1)
-        gs.addWidget(QLabel("×"), 4, 2)
-        gs.addWidget(self.s_h, 4, 3)
-        gs.addWidget(self.ch_prop, 5, 1, 1, 3)
+        n = len(MODES)
+        gs.addWidget(self.s_w, n, 1)
+        gs.addWidget(QLabel("×"), n, 2)
+        gs.addWidget(self.s_h, n, 3)
+        gs.addWidget(self.ch_prop, n + 1, 1, 1, 3)
         esq.addWidget(g, 2, 0)
 
         # ---- orientació i unitats
@@ -330,7 +338,7 @@ class DialegImpressio(QDialog):
         for sp, v in zip(self.s_marges, o["marges"]):
             sp.setValue(v / u)
         self.g_pos.button(POSICIONS.index(o["posicio"]) if o["posicio"] in POSICIONS else 4).setChecked(True)
-        self.g_mida.button(("original", "encaixa", "redueix", "especificada").index(o["mida"])).setChecked(True)
+        self.g_mida.button(MODES.index(o["mida"]) if o["mida"] in MODES else 2).setChecked(True)
         self.s_w.setValue(o["esp_w"] / u)
         self.s_h.setValue(o["esp_h"] / u)
         self.ch_prop.setChecked(o["proporcio"])
@@ -346,7 +354,7 @@ class DialegImpressio(QDialog):
 
     def opcions(self):
         u = self._u()
-        modes = ("original", "encaixa", "redueix", "especificada")
+        modes = MODES
         return {"marges": [sp.value() * u for sp in self.s_marges],
                 "mida": modes[max(0, self.g_mida.checkedId())], "esp_w": self.s_w.value() * u,
                 "esp_h": self.s_h.value() * u, "proporcio": self.ch_prop.isChecked(),
@@ -410,8 +418,9 @@ class DialegImpressio(QDialog):
             else:
                 self.s_w.setValue(self.s_h.value() * iw / ih)
             self._bloc = False
-        if self.g_mida.checkedId() != 3:
-            self.g_mida.button(3).setChecked(True)
+        esp = MODES.index("especificada")
+        if self.g_mida.checkedId() != esp:
+            self.g_mida.button(esp).setChecked(True)
         self._refresca()
 
     def _canvia_unitats(self):
@@ -488,11 +497,15 @@ class DialegImpressio(QDialog):
         self.lbl_paper.setText(f"{t('im_paper_txt')}: {nom_paper}  ({pw / f:.2f} × {ph / f:.2f} {u})")
         el = self.actual()
         if el:
-            r, gira, _ = disposa((pw, ph), el.w, el.h, el.dpi, self.opcions())
+            r, gira, util = disposa((pw, ph), el.w, el.h, el.dpi, self.opcions())
             if not r.isEmpty():
                 iw = el.h if gira else el.w
                 ppp = iw / (r.width() / 25.4)
                 avis = f"  ·  ⚠ {t('im_qualitat_baixa')}" if ppp < 150 else ""
+                vis = r.intersected(util)
+                perdut = 1 - (vis.width() * vis.height()) / (r.width() * r.height())
+                if perdut > 0.005:
+                    avis = f"  ·  ✂ {t('im_es_retalla', p=round(perdut * 100))}" + avis
                 self.lbl_info.setText(t("im_pagina", i=self.llista.currentRow() + 1, n=len(self.elements)) +
                                       f"  ·  {r.width() / f:.2f} × {r.height() / f:.2f} {u}  ·  {ppp:.0f} ppp{avis}")
         else:
@@ -543,7 +556,7 @@ class DialegImpressio(QDialog):
             for n, el in enumerate(self.elements):
                 if n:
                     pr.newPage()
-                r, gira, _ = disposa((pagina.width(), pagina.height()), el.w, el.h, el.dpi, o)
+                r, gira, util = disposa((pagina.width(), pagina.height()), el.w, el.h, el.dpi, o)
                 if r.isEmpty():
                     continue
                 img = el.sencera()
@@ -557,7 +570,10 @@ class DialegImpressio(QDialog):
                                      Qt.TransformationMode.SmoothTransformation)
                 img = aplica_gamma(img, o["gamma"])
                 p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                p.save()
+                p.setClipRect(QRectF(util.x() * k, util.y() * k, util.width() * k, util.height() * k))
                 p.drawImage(desti, img)
+                p.restore()
                 if o["nom"]:
                     f = p.font()
                     f.setPointSizeF(8)

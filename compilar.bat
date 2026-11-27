@@ -17,7 +17,7 @@ if exist %ISCC% (
     echo Creant l'instal.lador amb Inno Setup...
     %ISCC% XoriguerFotos_Setup.iss
     if errorlevel 1 goto error
-    echo [OK] Instal.lador creat: XoriguerFotos_Setup_v1.3.1.exe
+    echo [OK] Instal.lador creat: XoriguerFotos_Setup_v1.3.2.exe
 ) else (
     echo Inno Setup 6 no trobat: nomes s'ha creat la carpeta dist\XoriguerFotos.
 )
